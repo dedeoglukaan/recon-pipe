@@ -1,0 +1,23 @@
+# recon-pipe configuration
+# Copy to recon.conf and pass with --config recon.conf
+
+# Requests per second for HTTP tools
+rate_limit = 30
+
+# HTTP proxy (e.g. Burp, Caido, mitmproxy)
+# proxy = http://127.0.0.1:8080
+
+# GitHub org for TruffleHog secret scanning
+# github_org = example-org
+
+# Disable port scanning (useful behind restrictive networks)
+# port_scan = false
+
+# Disable subdomain permutation brute-force
+# brute_force = false
+
+# Skip Wayback Machine queries (useful if archive.org is blocked)
+# skip_wayback = true
+
+# Skip specific phases (comma-separated)
+# skip_phases = 5,6
