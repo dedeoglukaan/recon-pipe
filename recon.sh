@@ -261,7 +261,11 @@ phase1_subdomain_enum() {
         if ! file_exists_skip "$crt_out" "crt.sh/$domain"; then
             log "    crt.sh..."
             local crt_status
-            crt_status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://crt.sh/?q=example.com&output=json" 2>/dev/null || echo "000")
+            if [[ "$DRY_RUN" == "true" ]]; then
+                crt_status="200"
+            else
+                crt_status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "https://crt.sh/?q=example.com&output=json" 2>/dev/null || echo "000")
+            fi
             if [[ "$crt_status" == "200" ]]; then
                 run_cmd bash -c "curl -s --max-time 30 'https://crt.sh/?q=%25.${domain}&output=json' 2>/dev/null | jq -r '.[].name_value' 2>/dev/null | sed 's/\*\.//g' | sort -u > '$crt_out'" || true
                 ok "    crt.sh: $(count_lines "$crt_out") entries"
@@ -401,7 +405,7 @@ phase1_subdomain_enum() {
 # ============================================================
 
 phase2_portscan_probe() {
-    if should_skip 2; then log "Phase 2 skipped"; PHASE_STATUS[2]="skipped"; return; fi
+    if should_skip 2; then log "Phase 2 skipped (--skip-phase)"; PHASE_STATUS[2]="skipped"; return; fi
     log "Phase 2: Port Scan + HTTP Probe"
 
     local resolved="$RECON_DIR/resolved.txt"
@@ -492,7 +496,7 @@ phase2_portscan_probe() {
 # ============================================================
 
 phase3_crawl() {
-    if should_skip 3; then log "Phase 3 skipped"; PHASE_STATUS[3]="skipped"; return; fi
+    if should_skip 3; then log "Phase 3 skipped (--skip-phase)"; PHASE_STATUS[3]="skipped"; return; fi
     log "Phase 3: Crawling + Historical URLs"
 
     local header_args=""
@@ -560,7 +564,7 @@ phase3_crawl() {
 # ============================================================
 
 phase4_paths() {
-    if should_skip 4; then log "Phase 4 skipped"; PHASE_STATUS[4]="skipped"; return; fi
+    if should_skip 4; then log "Phase 4 skipped (--skip-phase)"; PHASE_STATUS[4]="skipped"; return; fi
     log "Phase 4: Standard Path Checks"
 
     local httpx_txt="$RECON_DIR/httpx-recon.txt"
@@ -629,7 +633,7 @@ phase4_paths() {
 # ============================================================
 
 phase5_cloud() {
-    if should_skip 5; then log "Phase 5 skipped"; PHASE_STATUS[5]="skipped"; return; fi
+    if should_skip 5; then log "Phase 5 skipped (--skip-phase)"; PHASE_STATUS[5]="skipped"; return; fi
     log "Phase 5: Cloud & Infrastructure Recon"
 
     local shodan_out="$RECON_DIR/shodan-results.txt"
@@ -667,7 +671,7 @@ phase5_cloud() {
 # ============================================================
 
 phase6_secrets() {
-    if should_skip 6; then log "Phase 6 skipped"; PHASE_STATUS[6]="skipped"; return; fi
+    if should_skip 6; then log "Phase 6 skipped (--skip-phase)"; PHASE_STATUS[6]="skipped"; return; fi
     log "Phase 6: Secret Scanning"
 
     local secrets_out="$RECON_DIR/secrets.json"
@@ -713,7 +717,7 @@ print(count)
 # ============================================================
 
 phase7_takeover() {
-    if should_skip 7; then log "Phase 7 skipped"; PHASE_STATUS[7]="skipped"; return; fi
+    if should_skip 7; then log "Phase 7 skipped (--skip-phase)"; PHASE_STATUS[7]="skipped"; return; fi
     log "Phase 7: Subdomain Takeover Check"
 
     local takeover_out="$RECON_DIR/takeovers.txt"
