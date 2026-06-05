@@ -139,7 +139,7 @@ validate_safe "target" "$TARGET"
 [[ -n "$GITHUB_ORG" ]] && validate_safe "github-org" "$GITHUB_ORG"
 
 if [[ -z "$DOMAINS" ]]; then
-    err "No domains provided. Use --domains \"example.com api.example.com\""
+    echo -e "${RED}ERROR: No domains provided. Use --domains \"example.com api.example.com\"${NC}"
     exit 1
 fi
 
