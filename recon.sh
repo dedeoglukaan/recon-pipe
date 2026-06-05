@@ -101,9 +101,15 @@ if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
     cfg_wayback=$(parse_conf "skip_wayback" "false")
     cfg_skip=$(parse_conf "skip_phases" "")
 
-    [[ -n "$cfg_rate" && "$RATE_LIMIT" == "30" ]] && RATE_LIMIT="$cfg_rate"
-    [[ -n "$cfg_org" && -z "$GITHUB_ORG" ]] && GITHUB_ORG="$cfg_org"
-    [[ -n "$cfg_proxy" && -z "$PROXY" ]] && PROXY="$cfg_proxy"
+    # Strip shell metacharacters from config values
+    sanitize_conf() {
+        local val="$1"
+        printf '%s' "$val" | tr -d '\047\042\140$()|\&\\;<>#'
+    }
+
+    [[ -n "$cfg_rate" && "$RATE_LIMIT" == "30" ]] && RATE_LIMIT="$(sanitize_conf "$cfg_rate")"
+    [[ -n "$cfg_org" && -z "$GITHUB_ORG" ]] && GITHUB_ORG="$(sanitize_conf "$cfg_org")"
+    [[ -n "$cfg_proxy" && -z "$PROXY" ]] && PROXY="$(sanitize_conf "$cfg_proxy")"
     [[ "$cfg_port" == "false" ]] && PORT_SCAN=false
     [[ "$cfg_brute" == "false" ]] && BRUTE_FORCE=false
     [[ "$cfg_wayback" == "true" ]] && SKIP_WAYBACK=true
@@ -119,8 +125,16 @@ fi
 
 validate_safe() {
     local label="$1" value="$2"
-    if [[ "$value" =~ [\'\"\`\$\(\)\|\&\\] ]]; then
+    if [[ "$value" =~ [\'\"\`\$\(\)\|\&\\\;\<\>\#] || "$value" =~ $'\n' ]]; then
         echo -e "${RED}ERROR: Unsafe characters in $label${NC}"
+        exit 1
+    fi
+}
+
+validate_numeric() {
+    local label="$1" value="$2"
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}ERROR: $label must be a number, got: $value${NC}"
         exit 1
     fi
 }
@@ -137,6 +151,9 @@ validate_safe "target" "$TARGET"
 [[ -n "$COOKIE" ]] && validate_safe "cookie" "$COOKIE"
 [[ -n "$HEADER" ]] && validate_safe "header" "$HEADER"
 [[ -n "$GITHUB_ORG" ]] && validate_safe "github-org" "$GITHUB_ORG"
+[[ -n "$PROXY" ]] && validate_safe "proxy" "$PROXY"
+[[ -n "$OUTPUT_DIR" ]] && validate_safe "output" "$OUTPUT_DIR"
+validate_numeric "rate-limit" "$RATE_LIMIT"
 
 if [[ -z "$DOMAINS" ]]; then
     echo -e "${RED}ERROR: No domains provided. Use --domains \"example.com api.example.com\"${NC}"
@@ -364,10 +381,12 @@ phase1_subdomain_enum() {
             run_cmd bash -c "cat '$ALL_SUBS' | dnsx -silent -cname -resp > '$cnames' 2>/dev/null" || true
             ok "  CNAMEs: $(count_lines "$cnames")"
         else
-            warn "  dnsx not installed — using basic resolution"
+            warn "  dnsx not installed — using basic resolution (no CNAME detection)"
             run_cmd bash -c "cat '$ALL_SUBS' | while read -r sub; do host \"\$sub\" 2>/dev/null | grep -q 'has address' && echo \"\$sub\"; done > '$resolved'" || true
             TOTAL_RESOLVED=$(count_lines "$resolved")
             ok "  Resolved (basic): $TOTAL_RESOLVED hosts"
+            warn "  CNAME detection skipped (requires dnsx) — Phase 7 takeover check will be limited"
+            touch "$cnames"
         fi
     else
         TOTAL_RESOLVED=$(count_lines "$resolved")
@@ -436,25 +455,35 @@ phase2_portscan_probe() {
 
     local httpx_json="$RECON_DIR/httpx-recon.json"
     local httpx_txt="$RECON_DIR/httpx-recon.txt"
-    if ! file_exists_skip "$httpx_json" "HTTP probe"; then
+    local httpx_ran=false
+    if ! file_exists_skip "$httpx_txt" "HTTP probe"; then
         if command -v httpx &>/dev/null; then
             log "  httpx fingerprinting (rate: ${RATE_LIMIT}/s)..."
             local header_args=""
             [[ -n "$HEADER" ]] && header_args="-H '$HEADER'"
 
             run_cmd bash -c "cat '$probe_input' | httpx -sc -title -td -server -favicon -cdn -ip -asn -follow-redirects -rl $RATE_LIMIT $header_args -json -o '$httpx_json' 2>/dev/null" || true
-            run_cmd bash -c "cat '$probe_input' | httpx -sc -title -td -server -cdn -follow-redirects -rl $RATE_LIMIT $header_args -o '$httpx_txt' 2>/dev/null" || true
+            # Derive text listing from JSON (avoids running httpx twice)
+            if [[ -f "$httpx_json" ]]; then
+                jq -r '"\(.url) [\(.status_code // "")] [\(.title // "")] [\(.tech // [] | join(","))]"' "$httpx_json" > "$httpx_txt" 2>/dev/null || true
+            fi
             TOTAL_LIVE=$(count_lines "$httpx_txt")
             ok "  Live HTTP hosts: $TOTAL_LIVE"
+            httpx_ran=true
         else
             warn "  httpx not installed, skipping HTTP probe"
         fi
     else
         TOTAL_LIVE=$(count_lines "$httpx_txt")
+        httpx_ran=true
     fi
 
     rm -f "$probe_input"
-    PHASE_STATUS[2]="done"
+    if [[ "$httpx_ran" == "true" ]]; then
+        PHASE_STATUS[2]="done"
+    else
+        PHASE_STATUS[2]="partial"
+    fi
     ok "Phase 2 complete: $TOTAL_LIVE live hosts, $TOTAL_PORTS port entries"
 }
 
@@ -512,7 +541,10 @@ phase3_crawl() {
     # Filter interesting wayback URLs
     local wb_all="$RECON_DIR/wayback-all.txt"
     local wb_interesting="$RECON_DIR/wayback-interesting.txt"
-    cat "$RECON_DIR"/wayback-*.txt 2>/dev/null | sort -u > "$wb_all" 2>/dev/null || true
+    rm -f "$wb_all" "$wb_interesting"
+    for domain in "${DOMAIN_LIST[@]}"; do
+        [[ -f "$RECON_DIR/wayback-${domain}.txt" ]] && cat "$RECON_DIR/wayback-${domain}.txt"
+    done 2>/dev/null | sort -u > "$wb_all" 2>/dev/null || true
     grep -iE "(api|admin|internal|debug|staging|config|backup|test|swagger|graphql|actuator)" "$wb_all" > "$wb_interesting" 2>/dev/null || true
 
     if [[ -f "$wb_interesting" && $(count_lines "$wb_interesting") -gt 0 ]]; then

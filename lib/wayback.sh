@@ -79,4 +79,4 @@ wait "$PID_OTX" 2>/dev/null || true
 [[ -n "${PID_VT:-}" ]] && wait "$PID_VT" 2>/dev/null || true
 
 # Dedupe and output
-sort -u "$TMPDIR/all.txt" | grep -v '^$'
+sort -u "$TMPDIR/all.txt" | grep -v '^$' || true
